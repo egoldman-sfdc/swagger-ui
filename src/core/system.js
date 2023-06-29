@@ -1,8 +1,10 @@
+import React from "react"
 import { createStore, applyMiddleware, bindActionCreators, compose } from "redux"
 import Im, { fromJS, Map } from "immutable"
 import deepExtend from "deep-extend"
 import { combineReducers } from "redux-immutable"
-import serializeError from "serialize-error"
+import { serializeError } from "serialize-error"
+import merge from "lodash/merge"
 import { NEW_THROWN_ERR } from "corePlugins/err/actions"
 import win from "core/window"
 
@@ -17,7 +19,6 @@ function createStoreWithMiddleware(rootReducer, initialState, getSystem) {
     // createLogger( {
     //   stateTransformer: state => state && state.toJS()
     // } ),
-    // errorLog(getSystem), Need to properly handle errors that occur during a render. Ie: let them be...
     systemThunkMiddleware( getSystem )
   ]
 
@@ -34,6 +35,7 @@ export default class Store {
     deepExtend(this, {
       state: {},
       plugins: [],
+      pluginsOptions: {},
       system: {
         configs: {},
         fn: {},
@@ -62,9 +64,15 @@ export default class Store {
   }
 
   register(plugins, rebuild=true) {
-    var pluginSystem = combinePlugins(plugins, this.getSystem())
+    var pluginSystem = combinePlugins(plugins, this.getSystem(), this.pluginsOptions)
     systemExtend(this.system, pluginSystem)
     if(rebuild) {
+      this.buildSystem()
+    }
+
+    const needAnotherRebuild = callAfterLoad.call(this.system, plugins, this.getSystem())
+
+    if(needAnotherRebuild) {
       this.buildSystem()
     }
   }
@@ -76,7 +84,7 @@ export default class Store {
     this.boundSystem = Object.assign({},
         this.getRootInjects(),
         this.getWrappedAndBoundActions(dispatch),
-        this.getBoundSelectors(getState, this.getSystem),
+        this.getWrappedAndBoundSelectors(getState, this.getSystem),
         this.getStateThunks(getState),
         this.getFn(),
         this.getConfigs()
@@ -97,7 +105,8 @@ export default class Store {
       getComponents: this.getComponents.bind(this),
       getState: this.getStore().getState,
       getConfigs: this._getConfigs.bind(this),
-      Im
+      Im,
+      React
     }, this.system.rootInjects || {})
   }
 
@@ -168,11 +177,41 @@ export default class Store {
                 if(!isFn(newAction)) {
                   throw new TypeError("wrapActions needs to return a function that returns a new function (ie the wrapped action)")
                 }
-                return newAction
+                return wrapWithTryCatch(newAction)
               }, action || Function.prototype)
             })
           }
         return actions
+      })
+  }
+
+  getWrappedAndBoundSelectors(getState, getSystem) {
+    let selectorGroups = this.getBoundSelectors(getState, getSystem)
+      return objMap(selectorGroups, (selectors, selectorGroupName) => {
+        let stateName = [selectorGroupName.slice(0, -9)] // selectors = 9 chars
+        let wrappers = this.system.statePlugins[stateName].wrapSelectors
+          if(wrappers) {
+            return objMap(selectors, (selector, selectorName) => {
+              let wrap = wrappers[selectorName]
+              if(!wrap) {
+                return selector
+              }
+
+              if(!Array.isArray(wrap)) {
+                wrap = [wrap]
+              }
+              return wrap.reduce((acc, fn) => {
+                let wrappedSelector = (...args) => {
+                  return fn(acc, this.getSystem())(getState().getIn(stateName), ...args)
+                }
+                if(!isFn(wrappedSelector)) {
+                  throw new TypeError("wrapSelector needs to return a function that returns a new function (ie the wrapped action)")
+                }
+                return wrappedSelector
+              }, selector || Function.prototype)
+            })
+          }
+        return selectors
       })
   }
 
@@ -197,8 +236,17 @@ export default class Store {
   }
 
   getComponents(component) {
-    if(typeof component !== "undefined")
+    const res = this.system.components[component]
+
+    if(Array.isArray(res)) {
+      return res.reduce((ori, wrapper) => {
+        return wrapper(ori, this.getSystem())
+      })
+    }
+    if(typeof component !== "undefined") {
       return this.system.components[component]
+    }
+
     return this.system.components
   }
 
@@ -209,11 +257,11 @@ export default class Store {
 
       return objMap(obj, (fn) => {
         return (...args) => {
-          let res = fn.apply(null, [getNestedState(), ...args])
+          let res = wrapWithTryCatch(fn).apply(null, [getNestedState(), ...args])
 
           //  If a selector returns a function, give it the system - for advanced usage
           if(typeof(res) === "function")
-            res = res(getSystem())
+            res = wrapWithTryCatch(res)(getSystem())
 
           return res
         }
@@ -225,8 +273,9 @@ export default class Store {
 
     dispatch = dispatch || this.getStore().dispatch
 
-    const process = creator =>{
+    const actions = this.getActions()
 
+    const process = creator =>{
       if( typeof( creator ) !== "function" ) {
         return objMap(creator, prop => process(prop))
       }
@@ -245,13 +294,12 @@ export default class Store {
       }
 
     }
-    return objMap(this.getActions(), actionCreator => bindActionCreators( process( actionCreator ), dispatch ) )
+    return objMap(actions, actionCreator => bindActionCreators( process( actionCreator ), dispatch ) )
   }
 
   getMapStateToProps() {
     return () => {
-      let obj = Object.assign({}, this.getSystem())
-      return obj
+      return Object.assign({}, this.getSystem())
     }
   }
 
@@ -263,20 +311,43 @@ export default class Store {
 
 }
 
-function combinePlugins(plugins, toolbox) {
-  if(isObject(plugins) && !isArray(plugins))
-    return plugins
+function combinePlugins(plugins, toolbox, pluginOptions) {
+  if(isObject(plugins) && !isArray(plugins)) {
+    return merge({}, plugins)
+  }
 
-  if(isFunc(plugins))
-    return combinePlugins(plugins(toolbox), toolbox)
+  if(isFunc(plugins)) {
+    return combinePlugins(plugins(toolbox), toolbox, pluginOptions)
+  }
 
   if(isArray(plugins)) {
+    const dest = pluginOptions.pluginLoadType === "chain" ? toolbox.getComponents() : {}
+
     return plugins
-    .map(plugin => combinePlugins(plugin, toolbox))
-    .reduce(systemExtend, {})
+    .map(plugin => combinePlugins(plugin, toolbox, pluginOptions))
+    .reduce(systemExtend, dest)
   }
 
   return {}
+}
+
+function callAfterLoad(plugins, system, { hasLoaded } = {}) {
+  let calledSomething = hasLoaded
+  if(isObject(plugins) && !isArray(plugins)) {
+    if(typeof plugins.afterLoad === "function") {
+      calledSomething = true
+      wrapWithTryCatch(plugins.afterLoad).call(this, system)
+    }
+  }
+
+  if(isFunc(plugins))
+    return callAfterLoad.call(this, plugins(system), system, { hasLoaded: calledSomething })
+
+  if(isArray(plugins)) {
+    return plugins.map(plugin => callAfterLoad.call(this, plugin, system, { hasLoaded: calledSomething }))
+  }
+
+  return calledSomething
 }
 
 // Wraps deepExtend, to account for certain fields, being wrappers.
@@ -291,6 +362,29 @@ function systemExtend(dest={}, src={}) {
     return dest
   }
 
+  // Wrap components
+  // Parses existing components in the system, and prepares them for wrapping via getComponents
+  if(src.wrapComponents) {
+    objMap(src.wrapComponents, (wrapperFn, key) => {
+      const ori = dest.components && dest.components[key]
+      if(ori && Array.isArray(ori)) {
+        dest.components[key] = ori.concat([wrapperFn])
+        delete src.wrapComponents[key]
+      } else if(ori) {
+        dest.components[key] = [ori, wrapperFn]
+        delete src.wrapComponents[key]
+      }
+    })
+
+    if(!Object.keys(src.wrapComponents).length) {
+      // only delete wrapComponents if we've matched all of our wrappers to components
+      // this handles cases where the component to wrap may be out of our scope,
+      // but a higher recursive `combinePlugins` call will be able to handle it.
+      delete src.wrapComponents
+    }
+  }
+
+
   // Account for wrapActions, make it an array and append to it
   // Modifies `src`
   // 80% of this code is just safe traversal. We need to address that ( ie: use a lib )
@@ -298,23 +392,46 @@ function systemExtend(dest={}, src={}) {
   if(isObject(statePlugins)) {
     for(let namespace in statePlugins) {
       const namespaceObj = statePlugins[namespace]
-      if(!isObject(namespaceObj) || !isObject(namespaceObj.wrapActions)) {
+      if(!isObject(namespaceObj)) {
         continue
       }
-      const { wrapActions } = namespaceObj
-      for(let actionName in wrapActions) {
-        let action = wrapActions[actionName]
 
-        // This should only happen if dest is the first plugin, since invocations after that will ensure its an array
-        if(!Array.isArray(action)) {
-          action = [action]
-          wrapActions[actionName] = action // Put the value inside an array
+      const { wrapActions, wrapSelectors } = namespaceObj
+
+      // process action wrapping
+      if (isObject(wrapActions)) {
+        for(let actionName in wrapActions) {
+          let action = wrapActions[actionName]
+
+          // This should only happen if dest is the first plugin, since invocations after that will ensure its an array
+          if(!Array.isArray(action)) {
+            action = [action]
+            wrapActions[actionName] = action // Put the value inside an array
+          }
+
+          if(src && src.statePlugins && src.statePlugins[namespace] && src.statePlugins[namespace].wrapActions && src.statePlugins[namespace].wrapActions[actionName]) {
+            src.statePlugins[namespace].wrapActions[actionName] = wrapActions[actionName].concat(src.statePlugins[namespace].wrapActions[actionName])
+          }
+
         }
+      }
 
-        if(src && src.statePlugins && src.statePlugins[namespace] && src.statePlugins[namespace].wrapActions && src.statePlugins[namespace].wrapActions[actionName]) {
-          src.statePlugins[namespace].wrapActions[actionName] = wrapActions[actionName].concat(src.statePlugins[namespace].wrapActions[actionName])
+      // process selector wrapping
+      if (isObject(wrapSelectors)) {
+        for(let selectorName in wrapSelectors) {
+          let selector = wrapSelectors[selectorName]
+
+          // This should only happen if dest is the first plugin, since invocations after that will ensure its an array
+          if(!Array.isArray(selector)) {
+            selector = [selector]
+            wrapSelectors[selectorName] = selector // Put the value inside an array
+          }
+
+          if(src && src.statePlugins && src.statePlugins[namespace] && src.statePlugins[namespace].wrapSelectors && src.statePlugins[namespace].wrapSelectors[selectorName]) {
+            src.statePlugins[namespace].wrapSelectors[selectorName] = wrapSelectors[selectorName].concat(src.statePlugins[namespace].wrapSelectors[selectorName])
+          }
+
         }
-
       }
     }
   }
@@ -347,11 +464,33 @@ function makeReducer(reducerObj) {
     if(!reducerObj)
       return state
 
-    let redFn = reducerObj[action.type]
+    let redFn = (reducerObj[action.type])
     if(redFn) {
-      return redFn(state, action)
+      const res = wrapWithTryCatch(redFn)(state, action)
+      // If the try/catch wrapper kicks in, we'll get null back...
+      // in that case, we want to avoid making any changes to state
+      return res === null ? state : res
     }
     return state
+  }
+}
+
+function wrapWithTryCatch(fn, {
+  logErrors = true
+} = {}) {
+  if(typeof fn !== "function") {
+    return fn
+  }
+
+  return function(...args) {
+    try {
+      return fn.call(this, ...args)
+    } catch(e) {
+      if(logErrors) {
+        console.error(e)
+      }
+      return null
+    }
   }
 }
 

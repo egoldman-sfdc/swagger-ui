@@ -1,7 +1,7 @@
 import React, { PureComponent } from "react"
 import PropTypes from "prop-types"
 import { fromJS, List } from "immutable"
-import { getSampleSchema } from "core/utils"
+import { getKnownSyntaxHighlighterLanguage } from "core/utils/jsonParse"
 
 const NOOP = Function.prototype
 
@@ -14,18 +14,19 @@ export default class ParamBody extends PureComponent {
     consumes: PropTypes.object,
     consumesValue: PropTypes.string,
     fn: PropTypes.object.isRequired,
+    getConfigs: PropTypes.func.isRequired,
     getComponent: PropTypes.func.isRequired,
     isExecute: PropTypes.bool,
     specSelectors: PropTypes.object.isRequired,
     pathMethod: PropTypes.array.isRequired
-  };
+  }
 
   static defaultProp = {
     consumes: fromJS(["application/json"]),
     param: fromJS({}),
     onChange: NOOP,
     onChangeConsumes: NOOP,
-  };
+  }
 
   constructor(props, context) {
     super(props, context)
@@ -41,16 +42,15 @@ export default class ParamBody extends PureComponent {
     this.updateValues.call(this, this.props)
   }
 
-  componentWillReceiveProps(nextProps) {
+  UNSAFE_componentWillReceiveProps(nextProps) {
     this.updateValues.call(this, nextProps)
   }
 
   updateValues = (props) => {
-    let { specSelectors, pathMethod, param, isExecute, consumesValue="" } = props
-    let parameter = specSelectors ? specSelectors.getParameter(pathMethod, param.get("name")) : {}
+    let { param, isExecute, consumesValue="" } = props
     let isXml = /xml/i.test(consumesValue)
     let isJson = /json/i.test(consumesValue)
-    let paramValue = isXml ? parameter.get("value_xml") : parameter.get("value")
+    let paramValue = isXml ? param.get("value_xml") : param.get("value")
 
     if ( paramValue !== undefined ) {
       let val = !paramValue && isJson ? "{}" : paramValue
@@ -66,10 +66,12 @@ export default class ParamBody extends PureComponent {
   }
 
   sample = (xml) => {
-    let { param, fn:{inferSchema} } = this.props
-    let schema = inferSchema(param.toJS())
+    let { param, fn} = this.props
+    let schema = fn.inferSchema(param.toJS())
 
-    return getSampleSchema(schema, xml)
+    return fn.getSampleSchema(schema, xml, {
+      includeWriteOnly: true
+    })
   }
 
   onChange = (value, { isEditBox, isXml }) => {
@@ -77,14 +79,13 @@ export default class ParamBody extends PureComponent {
     this._onChange(value, isXml)
   }
 
-  _onChange = (val, isXml) => { (this.props.onChange || NOOP)(this.props.param, val, isXml) }
+  _onChange = (val, isXml) => { (this.props.onChange || NOOP)(val, isXml) }
 
   handleOnChange = e => {
     const {consumesValue} = this.props
-    const isJson = /json/i.test(consumesValue)
     const isXml = /xml/i.test(consumesValue)
-    const inputValue = isJson ? e.target.value.trim() : e.target.value
-    this.onChange(inputValue, {isXml})
+    const inputValue = e.target.value
+    this.onChange(inputValue, {isXml, isEditBox: this.state.isEditBox})
   }
 
   toggleIsEditBox = () => this.setState( state => ({isEditBox: !state.isEditBox}))
@@ -96,7 +97,7 @@ export default class ParamBody extends PureComponent {
       isExecute,
       specSelectors,
       pathMethod,
-
+      getConfigs,
       getComponent,
     } = this.props
 
@@ -105,20 +106,27 @@ export default class ParamBody extends PureComponent {
     const HighlightCode = getComponent("highlightCode")
     const ContentType = getComponent("contentType")
     // for domains where specSelectors not passed
-    let parameter = specSelectors ? specSelectors.getParameter(pathMethod, param.get("name")) : param
+    let parameter = specSelectors ? specSelectors.parameterWithMetaByIdentity(pathMethod, param) : param
     let errors = parameter.get("errors", List())
     let consumesValue = specSelectors.contentTypeValues(pathMethod).get("requestContentType")
     let consumes = this.props.consumes && this.props.consumes.size ? this.props.consumes : ParamBody.defaultProp.consumes
 
     let { value, isEditBox } = this.state
+    let language = null
+    let testValueForJson = getKnownSyntaxHighlighterLanguage(value)
+    if (testValueForJson) {
+      language = "json"
+    }
 
     return (
-      <div className="body-param">
+      <div className="body-param" data-param-name={param.get("name")} data-param-in={param.get("in")}>
         {
           isEditBox && isExecute
             ? <TextArea className={ "body-param__text" + ( errors.count() ? " invalid" : "")} value={value} onChange={ this.handleOnChange }/>
             : (value && <HighlightCode className="body-param__example"
-                               value={ value }/>)
+                          language={ language }
+                          getConfigs={ getConfigs }
+                          value={ value }/>)
         }
         <div className="body-param-options">
           {
@@ -131,7 +139,12 @@ export default class ParamBody extends PureComponent {
           }
           <label htmlFor="">
             <span>Parameter content type</span>
-            <ContentType value={ consumesValue } contentTypes={ consumes } onChange={onChangeConsumes} className="body-param-content-type" />
+            <ContentType
+              value={ consumesValue }
+              contentTypes={ consumes }
+              onChange={onChangeConsumes}
+              className="body-param-content-type"
+              ariaLabel="Parameter content type" />
           </label>
         </div>
 

@@ -6,21 +6,22 @@ export default class Schemes extends React.Component {
   static propTypes = {
     specActions: PropTypes.object.isRequired,
     schemes: PropTypes.object.isRequired,
+    currentScheme: PropTypes.string.isRequired,
     path: PropTypes.string,
     method: PropTypes.string,
-    operationScheme: PropTypes.string
   }
 
-  componentWillMount() {
+  UNSAFE_componentWillMount() {
     let { schemes } = this.props
 
     //fire 'change' event to set default 'value' of select
     this.setScheme(schemes.first())
   }
 
-  componentWillReceiveProps(nextProps) {
-    if ( this.props.operationScheme && !nextProps.schemes.has(this.props.operationScheme) ) {
-      //fire 'change' event if our selected scheme is no longer an option
+  UNSAFE_componentWillReceiveProps(nextProps) {
+    if ( !this.props.currentScheme || !nextProps.schemes.includes(this.props.currentScheme) ) {
+      // if we don't have a selected currentScheme or if our selected scheme is no longer an option,
+      // then fire 'change' event and select the first scheme in the list of options
       this.setScheme(nextProps.schemes.first())
     }
   }
@@ -36,12 +37,12 @@ export default class Schemes extends React.Component {
   }
 
   render() {
-    let { schemes } = this.props
+    let { schemes, currentScheme } = this.props
 
     return (
       <label htmlFor="schemes">
         <span className="schemes-title">Schemes</span>
-        <select onChange={ this.onChange }>
+        <select onChange={ this.onChange } value={currentScheme}>
           { schemes.valueSeq().map(
             ( scheme ) => <option value={ scheme } key={ scheme }>{ scheme }</option>
           ).toArray()}
