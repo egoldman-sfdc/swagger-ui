@@ -6,7 +6,7 @@
     "keywords": ["swagger", "swaggerui", "rest", "api"],
     "buildpacks": [
         {
-            "url": "https://github.com/heroku/heroku-buildpack-nodejs#latest"
+            "url": "https://github.com/heroku/heroku-buildpack-static"
         }
     ]
 }
