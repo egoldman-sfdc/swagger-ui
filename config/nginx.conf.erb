@@ -45,8 +45,7 @@ http {
     }
 
     location @fallback {
-      add_header Content-Type text/html;
-      return 200 'Fallback';
+      auto_index on;
     }
 	}
 }
