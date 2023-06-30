@@ -37,7 +37,7 @@ http {
     port_in_redirect off;
     # root /dist;
 
-    location / {
+    location * {
       # try_files $uri $uri/ @fallback;
       # root ../dist; # path to your app
       # add_header Content-Type text/html;
