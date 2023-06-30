@@ -37,9 +37,9 @@ http {
     port_in_redirect off;
 
     location / {
-      # root /dist; # path to your app
-      add_header Content-Type text/html;
-      return 200 'Hello';
+      root ../dist; # path to your app
+      # add_header Content-Type text/html;
+      # return 200 'Hello';
     }
 	}
 }
