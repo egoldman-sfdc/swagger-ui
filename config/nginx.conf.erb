@@ -37,7 +37,8 @@ http {
     port_in_redirect off;
 
     location / {
-      root /dist; # path to your app
+      # root /dist; # path to your app
+      return 200 'Hello';
     }
 	}
 }
