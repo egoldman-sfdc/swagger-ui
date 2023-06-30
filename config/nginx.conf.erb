@@ -30,16 +30,23 @@ http {
 
 	server {
 		listen <%= ENV["PORT"] %>;
-		server_name _;
-		keepalive_timeout 5;
-		client_max_body_size <%= ENV['NGINX_CLIENT_MAX_BODY_SIZE'] || 1 %>M;
+		# server_name _;
+		# keepalive_timeout 5;
+		# client_max_body_size <%= ENV['NGINX_CLIENT_MAX_BODY_SIZE'] || 1 %>M;
 
     port_in_redirect off;
+    root /dist;
 
     location / {
-      root ../dist; # path to your app
+      try_files $uri $uri/ @fallback;
+      # root ../dist; # path to your app
       # add_header Content-Type text/html;
       # return 200 'Hello';
+    }
+
+    location @fallback {
+      add_header Content-Type text/html;
+      return 200 'Fallback';
     }
 	}
 }
