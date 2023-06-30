@@ -35,7 +35,7 @@ http {
 		# client_max_body_size <%= ENV['NGINX_CLIENT_MAX_BODY_SIZE'] || 1 %>M;
 
     port_in_redirect off;
-    root /dist;
+    # root /dist;
 
     location / {
       # try_files $uri $uri/ @fallback;
