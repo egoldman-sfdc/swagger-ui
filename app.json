@@ -3,5 +3,10 @@
     "description": "Swagger UI dynamically generates beautiful documentation from a Swagger-compliant API.",
     "repository": "https://github.com/swagger-api/swagger-ui",
     "logo": "https://github.com/swagger-api/swagger-ui/raw/master/dist/favicon-32x32.png",
-    "keywords": ["swagger", "swaggerui", "rest", "api"]
+    "keywords": ["swagger", "swaggerui", "rest", "api"],
+    "buildpacks": [
+      {
+        "url": "https://github.com/heroku/heroku-buildpack-nginx"
+      }
+    ]
 }
